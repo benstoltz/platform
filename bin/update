@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set +e    # soft fail to allow handling of php interpreter missing
+
 which php >/dev/null 2>&1
 if [ $? -eq 0 ]; then
 	php -r 'exit((int) version_compare(PHP_VERSION, "5.4", "<"));' >/dev/null 2>&1
@@ -8,6 +10,8 @@ if [ $? -eq 0 ]; then
 		exit 1
 	fi
 fi
+
+set -e    # hard fail to ensure the script exits with non-zero status when something fails
 
 # Defaults
 production=false
@@ -80,17 +84,11 @@ if [ $? -gt 0 ]; then
 		exit 1
 	fi
 fi
-# Check phinx
-if [ -f "$phinx" && "$migrate" = true ]; then
-	echo "!!! Migration tool phinx not installed, unable to run migrations"
-	exit 1
-fi
 
 # Disable interactive questions
 if [ "$nointeraction" = true ]; then
 	echo ">>> Disable interactive questions"
 	composer="$composer --no-interaction"
-	phinx="$phinx --no-interaction"
 fi
 
 # Deployment mode, disable all developer dependencies :)
@@ -107,6 +105,15 @@ else
 fi
 
 if [ "$migrate" = true ]; then
+	# Check phinx
+	if [ ! -f "$phinx" ]; then
+		echo "!!! Migration tool phinx not installed, unable to run migrations"
+		exit 1
+	fi
+	# Disable interactive questions
+	if [ "$nointeraction" = true ]; then
+		phinx="$phinx --no-interaction"
+	fi
 	echo ">>> Running migrations"
 	$phinx migrate -c application/phinx.php
 else

@@ -79,7 +79,7 @@ class Ushahidi_Repository_User extends Ushahidi_Repository implements
 	// SearchRepository
 	public function getSearchFields()
 	{
-		return ['username', 'email', 'role', 'q' /* LIKE realname, username */];
+		return ['email', 'role', 'q' /* LIKE realname, email */];
 	}
 
 	// SearchRepository
@@ -91,7 +91,6 @@ class Ushahidi_Repository_User extends Ushahidi_Repository implements
 		{
 			$query->and_where_open();
 			$query->where('email', 'LIKE', "%" . $search->q . "%");
-			$query->or_where('username', 'LIKE', "%" . $search->q . "%");
 			$query->or_where('realname', 'LIKE', "%" . $search->q . "%");
 			$query->and_where_close();
 		}
@@ -104,21 +103,9 @@ class Ushahidi_Repository_User extends Ushahidi_Repository implements
 	}
 
 	// UserRepository
-	public function getByUsername($username)
-	{
-		return $this->getEntity($this->selectOne(compact('username')));
-	}
-
-	// UserRepository
 	public function getByEmail($email)
 	{
 		return $this->getEntity($this->selectOne(compact('email')));
-	}
-
-	// RegisterRepository
-	public function isUniqueUsername($username)
-	{
-		return $this->selectCount(compact('username')) === 0;
 	}
 
 	// RegisterRepository
@@ -131,8 +118,8 @@ class Ushahidi_Repository_User extends Ushahidi_Repository implements
 	public function register(Entity $entity)
 	{
 		return $this->executeInsert([
+        'realname' => $entity->realname,
 				'email'    => $entity->email,
-				'username' => $entity->username,
 				'password' => $this->hasher->hash($entity->password),
 				'created'  => time()
 			]);
@@ -190,14 +177,13 @@ class Ushahidi_Repository_User extends Ushahidi_Repository implements
 			->execute($this->db);
 	}
 
-	// ResetPasswordRepository
-	public function getByUsernameOrEmail($identifier) {
-		$result = $this->selectQuery()
-			->where('email', '=', $identifier)
-			->or_where('username', '=', $identifier)
-			->limit(1)
-			->execute($this->db);
-
-		return $this->getEntity($result->current());
+	/**
+	 * Get total count of entities
+	 * @param  Array $where
+	 * @return int
+	 */
+	public function getTotalCount(Array $where = [])
+	{
+		return $this->selectCount($where);
 	}
 }

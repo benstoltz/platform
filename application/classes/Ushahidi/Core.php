@@ -42,12 +42,31 @@ abstract class Ushahidi_Core {
 		});
 		// Deployment db
 		$di->set('kohana.db', function() use ($di) {
-			return Database::instance('default', $di->get('db.config'));
+			return Database::instance('deployment', $di->get('db.config'));
 		});
-		// Media dir
-		$di->set('kohana.media.dir', function() use ($di) {
-			return Kohana::$config->load('media.media_upload_dir');
+
+		// CDN Config settings
+		$di->set('cdn.config', function() use ($di) {
+			return Kohana::$config->load('cdn')->as_array();
 		});
+
+		// Ratelimiter config settings
+
+		$di->set('ratelimiter.config', function() use ($di) {
+			return Kohana::$config->load('ratelimiter')->as_array();
+		});
+
+
+		$di->set('tool.uploader.prefix', function() use ($di) {
+			// Is this a multisite install?
+			$multisite = Kohana::$config->load('multisite.enabled');
+			if ($multisite) {
+				return $di->get('multisite')->getCdnPrefix();
+			}
+
+			return '';
+		});
+
 		// Multisite utility class
 		$di->set('multisite', $di->lazyNew('Ushahidi_Multisite'));
 		$di->params['Ushahidi_Multisite'] = [
@@ -75,10 +94,25 @@ abstract class Ushahidi_Core {
 		});
 
 		// Console commands (oauth is disabled, pending T305)
-		// $di->setter['Ushahidi\Console\Application']['injectCommands'][] = $di->lazyNew('Ushahidi_Console_Oauth_Client');
-		// $di->setter['Ushahidi\Console\Application']['injectCommands'][] = $di->lazyNew('Ushahidi_Console_Oauth_Token');
+		$di->setter['Ushahidi\Console\Application']['injectCommands'][] = $di->lazyNew('Ushahidi_Console_Oauth_Client');
 		$di->setter['Ushahidi\Console\Application']['injectCommands'][] = $di->lazyNew('Ushahidi_Console_Dataprovider');
 		$di->setter['Ushahidi_Console_Dataprovider']['setRepo'] = $di->lazyGet('repository.dataprovider');
+
+		// Notification Collection command
+		$di->setter['Ushahidi\Console\Application']['injectCommands'][] = $di->lazyNew('Ushahidi_Console_Notification');
+		$di->setter['Ushahidi_Console_Notification']['setDatabase'] = $di->lazyGet('kohana.db');
+		$di->setter['Ushahidi_Console_Notification']['setPostRepo'] = $di->lazyGet('repository.post');
+		$di->setter['Ushahidi_Console_Notification']['setMessageRepo'] = $di->lazyGet('repository.message');
+		$di->setter['Ushahidi_Console_Notification']['setContactRepo'] = $di->lazyGet('repository.contact');
+		$di->setter['Ushahidi_Console_Notification']['setNotificationQueueRepo'] = $di->lazyGet('repository.notification.queue');
+
+		// Notification SavedSearch command
+		$di->setter['Ushahidi\Console\Application']['injectCommands'][] = $di->lazyNew('Ushahidi_Console_SavedSearch');
+		$di->setter['Ushahidi_Console_SavedSearch']['setSetRepo'] = $di->lazyGet('repository.savedsearch');
+		$di->setter['Ushahidi_Console_SavedSearch']['setPostRepo'] = $di->lazyGet('repository.post');
+		$di->setter['Ushahidi_Console_SavedSearch']['setMessageRepo'] = $di->lazyGet('repository.message');
+		$di->setter['Ushahidi_Console_SavedSearch']['setContactRepo'] = $di->lazyGet('repository.contact');
+		$di->setter['Ushahidi_Console_SavedSearch']['setSearchData'] = $di->lazyNew('Ushahidi\Core\SearchData');
 
 		// OAuth servers
 		$di->set('oauth.server.auth', function() use ($di) {
@@ -96,9 +130,9 @@ abstract class Ushahidi_Core {
 		$di->setter['League\OAuth2\Server\Authorization']['setRequest'] = $di->lazyNew('OAuth2_Request');
 
 		// Custom password authenticator
-		$di->setter['League\OAuth2\Server\Grant\Password']['setVerifyCredentialsCallback'] = function($username, $password) {
+		$di->setter['League\OAuth2\Server\Grant\Password']['setVerifyCredentialsCallback'] = function($email, $password) {
 			$usecase = service('factory.usecase')->get('users', 'login')
-				->setIdentifiers(compact('username', 'password'));
+				->setIdentifiers(compact('email', 'password'));
 
 			try
 			{
@@ -178,6 +212,14 @@ abstract class Ushahidi_Core {
 			'create' => $di->lazyNew('Ushahidi_Validator_Set_Create'),
 			'update' => $di->lazyNew('Ushahidi_Validator_Set_Update'),
 		];
+		$di->params['Ushahidi\Factory\ValidatorFactory']['map']['notifications'] = [
+			'create' => $di->lazyNew('Ushahidi_Validator_Notification_Create'),
+			'update' => $di->lazyNew('Ushahidi_Validator_Notification_Update'),
+		];
+		$di->params['Ushahidi\Factory\ValidatorFactory']['map']['contacts'] = [
+			'create' => $di->lazyNew('Ushahidi_Validator_Contact_Create'),
+			'update' => $di->lazyNew('Ushahidi_Validator_Contact_Update'),
+		];
 		$di->params['Ushahidi\Factory\ValidatorFactory']['map']['sets_posts'] = [
 			'create' => $di->lazyNew('Ushahidi_Validator_Set_Post_Create'),
 		];
@@ -202,6 +244,8 @@ abstract class Ushahidi_Core {
 			'sets_posts'           => $di->lazyNew('Ushahidi_Formatter_Post'),
 			'savedsearches_posts'  => $di->lazyNew('Ushahidi_Formatter_Post'),
 			'users'                => $di->lazyNew('Ushahidi_Formatter_User'),
+			'notifications'        => $di->lazyNew('Ushahidi_Formatter_Notification'),
+			'contacts'             => $di->lazyNew('Ushahidi_Formatter_Contact'),
 		];
 
 		// Formatter parameters
@@ -219,6 +263,8 @@ abstract class Ushahidi_Core {
 			'user',
 			'savedsearch',
 			'set_post',
+			'notification',
+			'contact',
 		] as $name)
 		{
 			$di->setter['Ushahidi_Formatter_' . Text::ucfirst($name, '_')]['setAuth'] =
@@ -233,21 +279,51 @@ abstract class Ushahidi_Core {
 		// Helpers, tools, etc
 		$di->set('tool.hasher.password', $di->lazyNew('Ushahidi_Hasher_Password'));
 		$di->set('tool.authenticator.password', $di->lazyNew('Ushahidi_Authenticator_Password'));
-		$di->set('tool.filesystem', $di->lazyNew('Ushahidi_Filesystem'));
+
 		$di->set('tool.validation', $di->lazyNew('Ushahidi_ValidationEngine'));
 		$di->set('tool.jsontranscode', $di->lazyNew('Ushahidi\Core\Tool\JsonTranscode'));
 
-		// Handle filesystem using local paths for now... lots of other options:
-		// https://github.com/thephpleague/flysystem/tree/master/src/Adapter
+		// Register filesystem adpater types
+		// Currently supported: Local filesysten, AWS S3 v3, Rackspace
+		// the naming scheme must match the cdn type set in config/cdn
+		$di->set('adapter.local', $di->lazyNew(
+				'Ushahidi_FilesystemAdapter_Local',
+				[
+					'config' => $di->lazyGet('cdn.config')
+				]
+			)
+		);
+		$di->set('adapter.aws', $di->lazyNew(
+				'Ushahidi_FilesystemAdapter_AWS',
+				[
+					'config' => $di->lazyGet('cdn.config')
+				]
+			)
+		);
+		$di->set('adapter.rackspace', $di->lazyNew(
+				'Ushahidi_FilesystemAdapter_Rackspace',
+				[
+					'config' => $di->lazyGet('cdn.config')
+				]
+			)
+		);
+
+		// Media Filesystem
+		// The Ushahidi filesystem adapter returns a flysystem adapter for a given
+		// cdn type based on the provided configuration
+		$di->set('tool.filesystem', $di->lazyNew('Ushahidi_Filesystem'));
 		$di->params['Ushahidi_Filesystem'] = [
-			'adapter' => $di->lazyNew('League\Flysystem\Adapter\Local')
-			];
-		$di->params['League\Flysystem\Adapter\Local'] = [
-			'root' => $di->lazyGet('kohana.media.dir'),
+			'adapter' => $di->lazy(function () use ($di) {
+							 $adapter_type = $di->get('cdn.config');
+							 $fsa = $di->get('adapter.' . $adapter_type['type']);
+
+							 return $fsa->getAdapter();
+				   })
 			];
 
 		// Formatters
 		$di->set('formatter.entity.api', $di->lazyNew('Ushahidi_Formatter_API'));
+		$di->set('formatter.entity.console', $di->lazyNew('Ushahidi_Formatter_Console'));
 		$di->set('formatter.entity.post.value', $di->lazyNew('Ushahidi_Formatter_PostValue'));
 		$di->set('formatter.entity.post.geojson', $di->lazyNew('Ushahidi_Formatter_Post_GeoJSON'));
 		$di->set('formatter.entity.post.geojsoncollection', $di->lazyNew('Ushahidi_Formatter_Post_GeoJSONCollection'));
@@ -288,6 +364,8 @@ abstract class Ushahidi_Core {
 		));
 		$di->set('repository.user', $di->lazyNew('Ushahidi_Repository_User'));
 		$di->set('repository.role', $di->lazyNew('Ushahidi_Repository_Role'));
+		$di->set('repository.notification', $di->lazyNew('Ushahidi_Repository_Notification'));
+		$di->set('repository.notification.queue', $di->lazyNew('Ushahidi_Repository_Notification_Queue'));
 		$di->set('repository.oauth.client', $di->lazyNew('OAuth2_Storage_Client'));
 		$di->set('repository.oauth.session', $di->lazyNew('OAuth2_Storage_Session'));
 		$di->set('repository.oauth.scope', $di->lazyNew('OAuth2_Storage_Scope'));
@@ -351,9 +429,8 @@ abstract class Ushahidi_Core {
 		$di->set('validator.user.login', $di->lazyNew('Ushahidi_Validator_User_Login'));
 		$di->set('validator.contact.create', $di->lazyNew('Ushahidi_Validator_Contact_Create'));
 
-		$di->params['Ushahidi_Validator_Contact_Create'] = [
-			'repo' => $di->lazyGet('repository.contact'),
-			'user_repo' => $di->lazyGet('repository.user'),
+		$di->params['Ushahidi_Validator_Contact_Update'] = [
+			'repo' => $di->lazyGet('repository.user'),
 		];
 
 		// Dependencies of validators
@@ -368,6 +445,10 @@ abstract class Ushahidi_Core {
 			'post_value_factory' => $di->lazyGet('repository.post_value_factory'),
 			'post_value_validator_factory' => $di->lazyGet('validator.post.value_factory'),
 			];
+		$di->params['Ushahidi_Validator_Form_Update'] = [
+			'repo' => $di->lazyGet('repository.form'),
+			];
+
 		$di->param['Ushahidi_Validator_Form_Attribute_Update'] = [
 			'repo' => $di->lazyGet('repository.form_attribute'),
 			'form_stage_repo' => $di->lazyGet('repository.form_stage'),
@@ -380,6 +461,7 @@ abstract class Ushahidi_Core {
 		];
 		$di->params['Ushahidi_Validator_Message_Create'] = [
 			'repo' => $di->lazyGet('repository.message'),
+			'user_repo' => $di->lazyGet('repository.user')
 		];
 
 		$di->params['Ushahidi_Validator_Message_Receive'] = [
@@ -389,6 +471,11 @@ abstract class Ushahidi_Core {
 		$di->params['Ushahidi_Validator_Set_Update'] = [
 			'repo' => $di->lazyGet('repository.user'),
 			'role_repo' => $di->lazyGet('repository.role'),
+		];
+		$di->params['Ushahidi_Validator_Notification_Update'] = [
+			'user_repo' => $di->lazyGet('repository.user'),
+			'collection_repo' => $di->lazyGet('repository.set'),
+			'savedsearch_repo' => $di->lazyGet('repository.savedsearch'),
 		];
 		$di->params['Ushahidi_Validator_SavedSearch_Create'] = [
 			'repo' => $di->lazyGet('repository.user'),
@@ -464,6 +551,80 @@ abstract class Ushahidi_Core {
 
 		$di->set('tool.mailer', $di->lazyNew('Ushahidi_Mailer'));
 
+		// Event listener for the Set repo
+		$di->setter['Ushahidi_Repository_Set']['setEvent'] = 'PostSetEvent';
+
+		$di->setter['Ushahidi_Repository_Set']['setListener'] =
+			$di->lazyNew('Ushahidi_Listener_PostSetListener');
+
+		// NotificationQueue repo for Set listener
+		$di->setter['Ushahidi_Listener_PostSetListener']['setRepo'] =
+			$di->lazyGet('repository.notification.queue');
+
+		// Defined memcached
+		$di->set('memcached', $di->lazy(function () use ($di) {
+			$config = $di->get('ratelimiter.config');
+
+			$memcached = new Memcached();
+			$memcached->addServer($config['memcached']['host'], $config['memcached']['port']);
+
+			return $memcached;
+		}));
+
+		// Set up login rate limiter
+		$di->set('ratelimiter.login.flap', $di->lazyNew('BehEh\Flaps\Flap'));
+
+		$di->params['BehEh\Flaps\Flap'] = [
+			'storage' => $di->lazyNew('BehEh\Flaps\Storage\DoctrineCacheAdapter'),
+			'name' => 'login'
+		];
+
+		$di->set('ratelimiter.login.strategy', $di->lazyNew('BehEh\Flaps\Throttling\LeakyBucketStrategy'));
+
+		// 3 requests every 1 minute by default
+		$di->params['BehEh\Flaps\Throttling\LeakyBucketStrategy'] = [
+			'requests' => 3,
+			'timeSpan' => '1m'
+		];
+
+		$di->set('ratelimiter.login', $di->lazyNew('Ushahidi_RateLimiter'));
+
+		$di->params['Ushahidi_RateLimiter'] = [
+			'flap' => $di->lazyGet('ratelimiter.login.flap'),
+			'throttlingStrategy' => $di->lazyGet('ratelimiter.login.strategy'),
+		];
+
+		$di->params['BehEh\Flaps\Storage\DoctrineCacheAdapter'] = [
+			'cache' => $di->lazyGet('ratelimiter.cache')
+		];
+
+		// Rate limit storage cache
+		$di->set('ratelimiter.cache', function() use ($di) {
+			$config = $di->get('ratelimiter.config');
+			$cache = $config['cache'];
+
+			if ($cache === 'memcached') {
+				$di->setter['Doctrine\Common\Cache\MemcachedCache']['setMemcached'] =
+					$di->lazyGet('memcached');
+
+				return $di->newInstance('Doctrine\Common\Cache\MemcachedCache');
+			}
+			elseif ($cache === 'filesystem') {
+				$di->params['Doctrine\Common\Cache\FilesystemCache'] = [
+					'directory' => $config['filesystem']['directory'],
+				];
+
+				return $di->newInstance('Doctrine\Common\Cache\FilesystemCache');
+			}
+
+			// Fall back to using in-memory cache if none is configured
+			return $di->newInstance('Doctrine\Common\Cache\ArrayCache');
+		});
+
+		// Rate limiter violation handler
+		$di->setter['BehEh\Flaps\Flap']['setViolationHandler'] =
+			$di->lazyNew('Ushahidi_ThrottlingViolationHandler');
+
 		/**
 		 * 1. Load the plugins
 		 */
@@ -480,16 +641,19 @@ abstract class Ushahidi_Core {
 		// allowed groups are stored with the config service.
 		$groups = service('repository.config')->groups();
 
+		$db = service('kohana.db');
+
 		/**
 		 * Attach database config to override some settings
 		 */
 		try
 		{
-			if (DB::query(Database::SELECT, 'SHOW TABLES LIKE \'config\'')->execute()->count() > 0)
+			if (DB::query(Database::SELECT, 'SHOW TABLES LIKE \'config\'')->execute($db)->count() > 0)
 			{
-				Kohana::$config->attach(new Ushahidi_Config(array(
-					'groups' => $groups
-				)));
+				Kohana::$config->attach(new Ushahidi_Config([
+					'groups' => $groups,
+					'instance' => $db
+				]));
 			}
 		}
 		catch (Exception $e)
@@ -531,5 +695,4 @@ abstract class Ushahidi_Core {
 		$log = \Log::instance();
 		$log->add(Log::INFO, $message);
 	}
-
 }

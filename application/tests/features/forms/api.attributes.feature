@@ -59,7 +59,7 @@ Feature: Testing the Form Attributes API
         When I request "/forms/1/attributes"
         Then the response is JSON
         And the response has a "errors" property
-        Then the guzzle status code should be 400
+        Then the guzzle status code should be 422
 
     Scenario: Creating a new Attribute on a Stage with the wrong Form ID
         Given that I want to make a new "Attribute"
@@ -170,9 +170,18 @@ Feature: Testing the Form Attributes API
         And the response has a "errors" property
         Then the guzzle status code should be 404
 
-    Scenario: Listing All Attributes
+    Scenario: Listing All Attributes for a form
         Given that I want to get all "Attributes"
         When I request "/forms/1/attributes"
+        Then the response is JSON
+        And the response has a "count" property
+        And the type of the "count" property is "numeric"
+        And the "count" property equals "15"
+        Then the guzzle status code should be 200
+
+   Scenario: Listing All Attributes
+        Given that I want to get all "Attributes"
+        When I request "/forms/attributes"
         Then the response is JSON
         And the response has a "count" property
         And the type of the "count" property is "numeric"

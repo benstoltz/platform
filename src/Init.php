@@ -41,8 +41,10 @@ function service($what = null)
 
 // A special configuration group called "features" stores a list of feature
 // toggles. These switches are used to enable and disable specific aspects
-// of the platform. Often, features are used to to toggle beta or debugging
-// code on and off. To make this as easy as possible, we define a global
+// of the platform for varying levels of subscription to Ushahidi-managed
+// deployments.
+
+// To make this as easy as possible, we define a global
 // feature() function that always responds boolean.
 //
 // **Features that do not exist will always return `false`.**
@@ -69,13 +71,13 @@ $di->set('app.console', $di->lazyNew('Ushahidi\Console\Application'));
 
 // Any command can be registered with the console app.
 $di->params['Ushahidi\Console\Application']['injectCommands'] = [];
-$di->setter['Ushahidi\Console\Application']['injectCommands'][] = $di->lazyNew('Ushahidi\Console\Import');
 
 // Set up Import command
-$di->setter['Ushahidi\Console\Import']['setReaderMap'] = [];
-$di->setter['Ushahidi\Console\Import']['setReaderMap']['csv'] = $di->lazyGet('filereader.csv');
-$di->setter['Ushahidi\Console\Import']['setTransformer'] = $di->lazyGet('transformer.mapping');
-$di->setter['Ushahidi\Console\Import']['setImportUsecase'] = $di->lazy(function () use ($di) {
+$di->setter['Ushahidi\Console\Application']['injectCommands'][] = $di->lazyNew('Ushahidi\Console\Command\Import');
+$di->setter['Ushahidi\Console\Command\Import']['setReaderMap'] = [];
+$di->setter['Ushahidi\Console\Command\Import']['setReaderMap']['csv'] = $di->lazyGet('filereader.csv');
+$di->setter['Ushahidi\Console\Command\Import']['setTransformer'] = $di->lazyGet('transformer.mapping');
+$di->setter['Ushahidi\Console\Command\Import']['setImportUsecase'] = $di->lazy(function () use ($di) {
 	return service('factory.usecase')
 			->get('posts', 'import')
 			// Override authorizer for console
@@ -83,9 +85,29 @@ $di->setter['Ushahidi\Console\Import']['setImportUsecase'] = $di->lazy(function 
 });
 
 // User command
-$di->setter['Ushahidi\Console\Application']['injectCommands'][] = $di->lazyNew('Ushahidi\Console\User');
-$di->setter['Ushahidi\Console\User']['setRepo'] = $di->lazyGet('repository.user');
-$di->setter['Ushahidi\Console\User']['setValidator'] = $di->lazyNew('Ushahidi_Validator_User_Create'); 
+$di->setter['Ushahidi\Console\Application']['injectCommands'][] = $di->lazyNew('Ushahidi\Console\Command\User');
+$di->setter['Ushahidi\Console\Command\User']['setRepo'] = $di->lazyGet('repository.user');
+$di->setter['Ushahidi\Console\Command\User']['setValidator'] = $di->lazyNew('Ushahidi_Validator_User_Create');
+
+// Config commands
+$di->setter['Ushahidi\Console\Application']['injectCommands'][] = $di->lazyNew('Ushahidi\Console\Command\ConfigGet');
+$di->setter['Ushahidi\Console\Command\ConfigGet']['setUsecase'] = $di->lazy(function () use ($di) {
+	return service('factory.usecase')
+			->get('config', 'read')
+			// Override authorizer for console
+			->setAuthorizer($di->get('authorizer.console'))
+			// Override formatter for console
+			->setFormatter($di->get('formatter.entity.console'));
+});
+$di->setter['Ushahidi\Console\Application']['injectCommands'][] = $di->lazyNew('Ushahidi\Console\Command\ConfigSet');
+$di->setter['Ushahidi\Console\Command\ConfigSet']['setUsecase'] = $di->lazy(function () use ($di) {
+	return service('factory.usecase')
+			->get('config', 'update')
+			// Override authorizer for console
+			->setAuthorizer($di->get('authorizer.console'))
+			// Override formatter for console
+			->setFormatter($di->get('formatter.entity.console'));
+});
 
 // Validators are used to parse **and** verify input data used for write operations.
 $di->set('factory.validator', $di->lazyNew('Ushahidi\Factory\ValidatorFactory'));
@@ -113,6 +135,8 @@ $di->params['Ushahidi\Factory\AuthorizerFactory']['map'] = [
 	'sets_posts'           => $di->lazyGet('authorizer.post'),
 	'savedsearches'        => $di->lazyGet('authorizer.savedsearch'),
 	'users'                => $di->lazyGet('authorizer.user'),
+	'notifications'        => $di->lazyGet('authorizer.notification'),
+	'contacts'             => $di->lazyGet('authorizer.contact'),
 ];
 
 // Repositories are used for storage and retrieval of records.
@@ -134,6 +158,8 @@ $di->params['Ushahidi\Factory\RepositoryFactory']['map'] = [
 	'sets_posts'           => $di->lazyGet('repository.post'),
 	'savedsearches'        => $di->lazyGet('repository.savedsearch'),
 	'users'                => $di->lazyGet('repository.user'),
+	'notifications'        => $di->lazyGet('repository.notification'),
+	'contacts'             => $di->lazyGet('repository.contact'),
 ];
 
 // Formatters are used for to prepare the output of records. Actions that return
@@ -214,6 +240,7 @@ $di->setter['Ushahidi\Core\Usecase\Media\CreateMedia']['setFilesystem'] = $di->l
 
 // Message update requires extra validation of message direction+status.
 $di->params['Ushahidi\Factory\UsecaseFactory']['map']['messages'] = [
+	'create' => $di->lazyNew('Ushahidi\Core\Usecase\Message\CreateMessage'),
 	'update' => $di->lazyNew('Ushahidi\Core\Usecase\Message\UpdateMessage'),
 	'receive' => $di->newFactory('Ushahidi\Core\Usecase\Message\ReceiveMessage'),
 ];
@@ -233,6 +260,16 @@ $di->params['Ushahidi\Factory\UsecaseFactory']['map']['posts'] = [
 	'search'  => $di->lazyNew('Ushahidi\Core\Usecase\Post\SearchPost'),
 	'stats'   => $di->lazyNew('Ushahidi\Core\Usecase\Post\StatsPost'),
 	'import'  => $di->lazyNew('Ushahidi\Core\Usecase\ImportUsecase')
+];
+
+// Add custom create usecase for notifications
+$di->params['Ushahidi\Factory\UsecaseFactory']['map']['notifications'] = [
+	'create'  => $di->lazyNew('Ushahidi\Core\Usecase\Notification\CreateNotification')
+];
+
+// Add custom create usecase for contacts
+$di->params['Ushahidi\Factory\UsecaseFactory']['map']['contacts'] = [
+	'create'  => $di->lazyNew('Ushahidi\Core\Usecase\Contact\CreateContact')
 ];
 
 // Add custom usecases for sets_posts
@@ -255,6 +292,7 @@ $di->params['Ushahidi\Factory\UsecaseFactory']['map']['users'] = [
 	'passwordreset' => $di->lazyNew('Ushahidi\Core\Usecase\User\ResetUserPassword'),
 ];
 $di->setter['Ushahidi\Core\Usecase\User\LoginUser']['setAuthenticator'] = $di->lazyGet('tool.authenticator.password');
+$di->setter['Ushahidi\Core\Usecase\User\LoginUser']['setRateLimiter'] = $di->lazyGet('ratelimiter.login');
 $di->setter['Ushahidi\Core\Usecase\User\GetResetToken']['setMailer'] = $di->lazyGet('tool.mailer');
 
 // Traits
@@ -262,11 +300,13 @@ $di->setter['Ushahidi\Core\Traits\UserContext']['setUser'] = $di->lazyGet('sessi
 $di->setter['Ushahidi\Core\Usecase\Form\VerifyFormLoaded']['setFormRepository'] = $di->lazyGet('repository.form');
 $di->setter['Ushahidi\Core\Usecase\Form\VerifyStageLoaded']['setStageRepository']
 	= $di->lazyGet('repository.form_stage');
+$di->setter['Ushahidi\Core\Traits\Event']['setEmitter'] = $di->lazyNew('League\Event\Emitter');
 
 // Tools
 $di->set('tool.uploader', $di->lazyNew('Ushahidi\Core\Tool\Uploader'));
 $di->params['Ushahidi\Core\Tool\Uploader'] = [
 	'fs' => $di->lazyGet('tool.filesystem'),
+	'directory_prefix' => $di->lazyGet('tool.uploader.prefix')
 	];
 
 // Authorizers
@@ -294,6 +334,8 @@ $di->set('authorizer.message', $di->lazyNew('Ushahidi\Core\Tool\Authorizer\Messa
 $di->set('authorizer.tag', $di->lazyNew('Ushahidi\Core\Tool\Authorizer\TagAuthorizer'));
 $di->set('authorizer.savedsearch', $di->lazyNew('Ushahidi\Core\Tool\Authorizer\SetAuthorizer'));
 $di->set('authorizer.set', $di->lazyNew('Ushahidi\Core\Tool\Authorizer\SetAuthorizer'));
+$di->set('authorizer.notification', $di->lazyNew('Ushahidi\Core\Tool\Authorizer\NotificationAuthorizer'));
+$di->set('authorizer.contact', $di->lazyNew('Ushahidi\Core\Tool\Authorizer\ContactAuthorizer'));
 
 $di->set('authorizer.post', $di->lazyNew('Ushahidi\Core\Tool\Authorizer\PostAuthorizer'));
 $di->params['Ushahidi\Core\Tool\Authorizer\PostAuthorizer'] = [

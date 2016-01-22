@@ -15,15 +15,23 @@ use Ushahidi\Core\Entity\SavedSearch;
 use Ushahidi\Core\Entity\SetRepository;
 use Ushahidi\Core\SearchData;
 
+use League\Event\ListenerInterface;
+use Ushahidi\Core\Traits\Event;
+
 class Ushahidi_Repository_Set extends Ushahidi_Repository implements SetRepository
 {
 	// Use the JSON transcoder to encode properties
 	use Ushahidi_JsonTranscodeRepository;
 
+	// Use Event trait to trigger events
+	use Event;
+
 	/**
 	 * @var  Boolean  Return SavedSearches (when true) or vanilla Sets
 	 **/
 	protected $savedSearch = false;
+
+	protected $listener;
 
 	public function setSavedSearch($savedSearch)
 	{
@@ -183,10 +191,6 @@ class Ushahidi_Repository_Set extends Ushahidi_Repository implements SetReposito
 	// SetRepository
 	public function deleteSetPost($set_id, $post_id)
 	{
-		if ($this->savedSearch) {
-			throw new \LogicException('deleteSetPost method is not available for Saved Searches');
-		}
-
 		DB::delete('posts_sets')
 			->where('post_id', '=', $post_id)
 			->where('set_id', '=', $set_id)
@@ -196,10 +200,6 @@ class Ushahidi_Repository_Set extends Ushahidi_Repository implements SetReposito
 	// SetRepository
 	public function setPostExists($set_id, $post_id)
 	{
-		if ($this->savedSearch) {
-			throw new \LogicException('setPostExists method is not available for Saved Searches');
-		}
-
 		$result = DB::select('posts_sets.*')
 			->from('posts_sets')
 			->where('post_id', '=', $post_id)
@@ -213,10 +213,6 @@ class Ushahidi_Repository_Set extends Ushahidi_Repository implements SetReposito
 	// SetRepository
 	public function addPostToSet($set_id, $post_id)
 	{
-		if ($this->savedSearch) {
-			throw new \LogicException('addPostToSet method is not available for Saved Searches');
-		}
-
 		// Ensure post_id is an int
 		// @todo this probably should have happened elsewhere
 		$post_id = (int)$post_id;
@@ -226,6 +222,9 @@ class Ushahidi_Repository_Set extends Ushahidi_Repository implements SetReposito
 			->columns(['post_id', 'set_id'])
 			->values(array_values(compact('post_id', 'set_id')))
 			->execute($this->db);
-	}
 
+		// Fire event after post is added
+		// so that this is queued for the Notifications data provider
+		$this->emit($this->event, $set_id, $post_id);
+	}
 }

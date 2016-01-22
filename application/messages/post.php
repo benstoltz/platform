@@ -1,6 +1,7 @@
 <?php defined('SYSPATH') OR die('No direct script access.');
 
 return [
+  'publishedPostsLimitReached' => 'limit::posts',
 	'tagDoesNotExist' => 'tag :value does not exist',
 	'attributeDoesNotExist' => 'attribute ":param1" does not exist',
 	'tooManyValues' => 'Too many values for :param1 (max: :param2)',

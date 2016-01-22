@@ -39,18 +39,6 @@ Route::set('collections-posts', $apiBase . 'collections/<set_id>/posts(/<id>)',
 		'directory'  => 'Api/Collections'
 	));
 
-/**
- * Forms API SubRoute
- */
-Route::set('forms', $apiBase . 'forms/<form_id>/<controller>(/<id>)',
-	array(
-		'form_id' => '\d+',
-		'id' => '\d+'
-	))
-	->defaults(array(
-		'action'     => 'index',
-		'directory'  => 'Api/Forms'
-	));
 
 /**
  * Export Posts API SubRoute
@@ -215,6 +203,20 @@ Route::set('api', $apiBase . '(<controller>(/<id>))',
 	));
 
 /**
+ * Forms API SubRoute
+ */
+Route::set('forms', $apiBase . 'forms(/<form_id>)/<controller>(/<id>)',
+	array(
+		'form_id' => '\d+',
+		'id' => '\d+'
+	))
+	->defaults(array(
+		'action'     => 'index',
+		'directory'  => 'Api/Forms'
+	));
+
+
+/**
  * Translations API SubRoute
  */
 Route::set('translations', $apiBase . 'posts/<parent_id>/translations(/<locale>)',
@@ -250,4 +252,3 @@ Route::set('default', '('.$apiBase.')')
 		'action'     => 'index',
 		'directory'  => 'Api'
 	));
-

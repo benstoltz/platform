@@ -26,7 +26,7 @@ class Ushahidi_Repository_Config implements
 	// ReadRepository
 	public function getEntity(Array $data = null)
 	{
-		return new ConfigEntity($data);
+	  return new ConfigEntity($data);
 	}
 
 	// ReadRepository
@@ -61,10 +61,12 @@ class Ushahidi_Repository_Config implements
 	public function groups()
 	{
 		return [
+			'features',
 			'site',
 			'test',
 			'data-provider',
-			'map'
+			'map',
+			'twitter'
 		];
 	}
 
